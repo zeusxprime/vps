@@ -203,6 +203,10 @@ run_gitea_cli() {
     "${GITEA_BIN}" "$@"
 }
 
+# Quantidade visual/entrada dos números do menu.
+# 1 = 1,2,3... | 2 = 01,02,03...10
+MENU_OPTION_DIGITS=1
+
 fix_gitea_permissions() {
   mkdir -p "${GITEA_WORK_DIR}/custom/conf" "${GITEA_WORK_DIR}/data" "${GITEA_WORK_DIR}/data/gitea-repositories" "${GITEA_WORK_DIR}/log" "${BACKUP_DIR}"
   ensure_gitea_executable >/dev/null 2>&1 || true
@@ -217,7 +221,9 @@ pause() {
 }
 
 read_menu_option_2d() {
-  local prompt="${1:-Opção: }" first="" second="" opt=""
+  local prompt="${1:-Opção: }"
+  local digits="${2:-${MENU_OPTION_DIGITS:-1}}"
+  local first="" second="" opt=""
 
   # Limpa teclas pendentes para evitar inversão de dígitos.
   while IFS= read -r -s -n 1 -t 0.001 _ < /dev/tty 2>/dev/null; do :; done
@@ -239,11 +245,26 @@ read_menu_option_2d() {
     esac
   done
 
-  # Permite selecionar rápido com 1 dígito, mas ainda aceita 03/10.
-  if IFS= read -r -s -n 1 -t 0.12 second < /dev/tty 2>/dev/null && [[ "$second" =~ ^[0-9]$ ]]; then
-    printf '%s\n' "$second" > /dev/tty
-    opt="${first}${second}"
+  if [[ "$digits" == "2" ]]; then
+    # Menus com opção 10+ são exibidos em dois dígitos: 01,02...10.
+    # Aqui o segundo dígito é obrigatório para não confundir 1 com 10.
+    while true; do
+      IFS= read -r -s -n 1 second < /dev/tty || true
+      case "$second" in
+        $'\x1b')
+          read -r -s -n 2 -t 0.001 _ < /dev/tty || true
+          ;;
+        [0-9])
+          printf '%s\n' "$second" > /dev/tty
+          opt="${first}${second}"
+          break
+          ;;
+        *)
+          ;;
+      esac
+    done
   else
+    # Menus normais são selecionados com 1 dígito instantâneo.
     printf '\n' > /dev/tty
     opt="$first"
   fi
@@ -2410,6 +2431,7 @@ tokens_menu() {
 
   while true; do
     safe_clear
+    MENU_OPTION_DIGITS=1
 
     width="$(menu_width)"
     top="╔$(hline $((width-2)))╗"
@@ -3027,6 +3049,7 @@ repositories_menu() {
 
   while true; do
     safe_clear
+    MENU_OPTION_DIGITS=1
 
     width="$(menu_width)"
     top="╔$(hline $((width-2)))╗"
@@ -3062,6 +3085,7 @@ accounts_menu() {
 
   while true; do
     safe_clear
+    MENU_OPTION_DIGITS=1
 
     width="$(menu_width)"
     top="╔$(hline $((width-2)))╗"
@@ -3183,7 +3207,12 @@ fit_colored_text() {
 
 format_option() {
   local num="$1"
-  printf '%s%s %02d %s' "$CYAN_BG" "$WHITE_FG" "$num" "$RESET_FMT"
+  local digits="${MENU_OPTION_DIGITS:-1}"
+  if [[ "$digits" == "2" ]]; then
+    printf '%s%s %02d %s' "$CYAN_BG" "$WHITE_FG" "$num" "$RESET_FMT"
+  else
+    printf '%s%s %d %s' "$CYAN_BG" "$WHITE_FG" "$num" "$RESET_FMT"
+  fi
 }
 
 menu_item() {
@@ -3306,6 +3335,7 @@ bot_menu() {
 
   while true; do
     safe_clear
+    MENU_OPTION_DIGITS=1
 
     width="$(menu_width)"
     top="╔$(hline $((width-2)))╗"
@@ -3346,6 +3376,12 @@ main_menu() {
   local op
 
   while true; do
+    if is_installed; then
+      MENU_OPTION_DIGITS=2
+    else
+      MENU_OPTION_DIGITS=1
+    fi
+
     show_header
 
     op="$(read_menu_option_2d "Opção: ")"

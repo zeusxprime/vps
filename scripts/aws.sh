@@ -272,8 +272,9 @@ pause() {
 }
 
 wait_key_menu() {
-  local first="" second="" opt=""
+  local first=""
 
+  # Menus AWS têm até 9 opções: seleção instantânea com 1 dígito.
   while true; do
     IFS= read -r -s -n 1 first || true
     case "$first" in
@@ -281,32 +282,15 @@ wait_key_menu() {
         read -r -s -n 2 -t 0.001 _ || true
         ;;
       [0-9])
-        printf "%s" "$first"
-        break
+        printf "%s\n" "$first"
+        MENU_KEY="$first"
+        return 0
         ;;
       *)
         ;;
     esac
   done
-
-  # Aceita opções com 1 dígito sem travar. Se for digitado 03/10,
-  # o segundo dígito é capturado em uma janela curta.
-  if IFS= read -r -s -n 1 -t 0.12 second 2>/dev/null && [[ "$second" =~ ^[0-9]$ ]]; then
-    printf "%s\n" "$second"
-    opt="${first}${second}"
-  else
-    printf "\n"
-    opt="$first"
-  fi
-
-  case "$opt" in
-    00) MENU_KEY="0" ;;
-    01|02|03|04|05|06|07|08|09) MENU_KEY="${opt#0}" ;;
-    *) MENU_KEY="$opt" ;;
-  esac
-  return 0
 }
-
 get_cpu_usage_percent() {
   local cpu user nice system idle iowait irq softirq steal total1 total2 idle1 idle2 totald idled usage
   read -r cpu user nice system idle iowait irq softirq steal _ < /proc/stat
@@ -440,7 +424,8 @@ status_color() {
 
 format_option() {
   local num="$1"
-  printf '%b%b%02d%b' "$CYAN_BG" "$WHITE_FG" "$num" "$NC"
+  # Menus de até 9 opções usam 1 dígito: 1, 2, 3...
+  printf '%b%b%d%b' "$CYAN_BG" "$WHITE_FG" "$num" "$NC"
 }
 
 menu_item() {

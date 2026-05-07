@@ -134,7 +134,8 @@ fit_colored_text() {
 
 format_option() {
   local num="$1"
-  printf '%s%s %02d %s' "$CYAN_BG" "$WHITE_FG" "$num" "$RESET_FMT"
+  # Menus de até 9 opções usam 1 dígito: 1, 2, 3...
+  printf '%s%s %d %s' "$CYAN_BG" "$WHITE_FG" "$num" "$RESET_FMT"
 }
 
 menu_item() {
@@ -283,9 +284,9 @@ show_menu() {
 
 read_menu_option() {
   local prompt="${1:-Opção: }"
-  local first="" second="" opt=""
+  local first=""
 
-  # Limpa qualquer tecla pendente no buffer para evitar inverter 03 -> 30.
+  # Limpa qualquer tecla pendente no buffer para evitar leitura invertida.
   while IFS= read -r -s -n 1 -t 0.001 _ < /dev/tty 2>/dev/null; do :; done
 
   printf '%s%s%s' "$CYAN_FG" "$prompt" "$RESET_FMT" > /dev/tty
@@ -297,31 +298,15 @@ read_menu_option() {
         read -r -s -n 2 -t 0.001 _ < /dev/tty || true
         ;;
       [0-9])
-        printf '%s' "$first" > /dev/tty
-        break
+        printf '%s\n' "$first" > /dev/tty
+        printf '%s' "$first"
+        return 0
         ;;
       *)
         ;;
     esac
   done
-
-  # Aceita 1 dígito imediatamente. Se o usuário digitar 03, 04, 10 etc.,
-  # captura o segundo dígito sem criar atraso perceptível nos menus.
-  if IFS= read -r -s -n 1 -t 0.12 second < /dev/tty 2>/dev/null && [[ "$second" =~ ^[0-9]$ ]]; then
-    printf '%s\n' "$second" > /dev/tty
-    opt="${first}${second}"
-  else
-    printf '\n' > /dev/tty
-    opt="$first"
-  fi
-
-  case "$opt" in
-    00) printf '0' ;;
-    01|02|03|04|05|06|07|08|09) printf '%s' "${opt#0}" ;;
-    *) printf '%s' "$opt" ;;
-  esac
 }
-
 progress_line() {
   local percent="$1"
   local message="$2"
@@ -545,10 +530,8 @@ EOFWRAP
   SCRIPT_AWS="${INSTALL_DIR}/scripts/aws.sh"
   save_config
 
-  echo "Instalado em pasta oculta: $INSTALL_DIR"
-  echo "Comando global criado: gestorvps"
-  echo
-  echo "Para abrir depois: gestorvps"
+  echo "Instalado com sucesso!"
+  echo "Comando menu: gestorvps"
   pause
 }
 
