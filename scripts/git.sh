@@ -219,6 +219,9 @@ pause() {
 read_menu_option_2d() {
   local prompt="${1:-Opção: }" first="" second="" opt=""
 
+  # Limpa teclas pendentes para evitar inversão de dígitos.
+  while IFS= read -r -s -n 1 -t 0.001 _ < /dev/tty 2>/dev/null; do :; done
+
   printf '%s' "$prompt" > /dev/tty
 
   while true; do
@@ -236,23 +239,14 @@ read_menu_option_2d() {
     esac
   done
 
-  while true; do
-    IFS= read -r -s -n 1 second < /dev/tty || true
-    case "$second" in
-      $'\x1b')
-        read -r -s -n 2 -t 0.001 _ < /dev/tty || true
-        ;;
-      [0-9])
-        printf '%s' "$second" > /dev/tty
-        break
-        ;;
-      *)
-        ;;
-    esac
-  done
-
-  printf '\n' > /dev/tty
-  opt="${first}${second}"
+  # Permite selecionar rápido com 1 dígito, mas ainda aceita 03/10.
+  if IFS= read -r -s -n 1 -t 0.12 second < /dev/tty 2>/dev/null && [[ "$second" =~ ^[0-9]$ ]]; then
+    printf '%s\n' "$second" > /dev/tty
+    opt="${first}${second}"
+  else
+    printf '\n' > /dev/tty
+    opt="$first"
+  fi
 
   case "$opt" in
     00) printf '0' ;;
@@ -269,26 +263,39 @@ safe_clear() {
 progress_line() {
   local percent="$1"
   local message="$2"
-  local filled empty cols max_msg line msg
+  local filled empty cols width max_msg line msg prefix bar
+
+  (( percent < 0 )) && percent=0
+  (( percent > 100 )) && percent=100
 
   cols="$(tput cols 2>/dev/null || echo 80)"
-  (( cols < 45 )) && cols=45
+  [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+  (( cols < 32 )) && cols=32
 
-  filled=$(( percent * PROGRESS_WIDTH / 100 ))
-  empty=$(( PROGRESS_WIDTH - filled ))
+  width="$PROGRESS_WIDTH"
+  (( cols < 58 )) && width=10
+  (( cols < 44 )) && width=8
 
-  msg="$(printf '%s' "$message" | tr '\n' ' ')"
-  max_msg=$(( cols - PROGRESS_WIDTH - 18 ))
-  (( max_msg < 10 )) && max_msg=10
+  filled=$(( percent * width / 100 ))
+  empty=$(( width - filled ))
+
+  bar=""
+  if (( filled > 0 )); then bar+="$(printf '%*s' "$filled" '' | tr ' ' '#')"; fi
+  if (( empty > 0 )); then bar+="$(printf '%*s' "$empty" '' | tr ' ' '-')"; fi
+
+  prefix="[${bar}] $(printf '%3d' "$percent")% - "
+  msg="$(printf '%s' "$message" | tr '\r\n' '  ')"
+  max_msg=$(( cols - ${#prefix} - 1 ))
+  (( max_msg < 0 )) && max_msg=0
   if (( ${#msg} > max_msg )); then
-    msg="${msg:0:max_msg}"
+    if (( max_msg > 3 )); then
+      msg="${msg:0:max_msg-3}..."
+    else
+      msg="${msg:0:max_msg}"
+    fi
   fi
 
-  line="["
-  if (( filled > 0 )); then line+="$(printf '%*s' "$filled" '' | tr ' ' '#')"; fi
-  if (( empty > 0 )); then line+="$(printf '%*s' "$empty" '' | tr ' ' '-')"; fi
-  line+="] $(printf '%3d' "$percent")% - ${msg}"
-
+  line="${prefix}${msg}"
   printf '\033[2K\r%s' "$line"
 }
 
@@ -522,18 +529,16 @@ get_ram_usage() {
 }
 
 get_cpu_usage() {
-  local usage
-  usage="$(top -bn1 | awk '/^%Cpu/ {
-    for (i=1; i<=NF; i++) {
-      if ($i ~ /id,?/) {
-        idle=$(i-1)
-        gsub(/,/, "", idle)
-        printf "%.1f%%/100%%", 100 - idle
-        exit
-      }
-    }
-  }')"
-  printf '%s' "${usage:-0.0%/100%}"
+  local cpu user nice system idle iowait irq softirq steal total idle_all usage
+  read -r cpu user nice system idle iowait irq softirq steal _ < /proc/stat 2>/dev/null || { printf '0.0%%/100%%'; return; }
+  total=$((user + nice + system + idle + iowait + irq + softirq + steal))
+  idle_all=$((idle + iowait))
+  if (( total <= 0 )); then
+    printf '0.0%%/100%%'
+    return
+  fi
+  usage=$(( (1000 * (total - idle_all) / total + 5) / 10 ))
+  printf '%s%%/100%%' "$usage"
 }
 
 get_current_port() {
@@ -600,6 +605,14 @@ get_update_info() {
   else
     echo "ok|${current}|${current}"
   fi
+}
+
+get_update_info_menu() {
+  local current
+  current="$(get_current_gitea_version)"
+  # O menu não consulta a internet para não gerar delay ao trocar de tela.
+  # A verificação real continua sendo feita ao escolher Atualizar Gitea.
+  echo "ok|${current}|${current}"
 }
 
 get_current_protocol() {
@@ -3245,7 +3258,7 @@ show_header() {
   status="$(get_service_state_plain)"
   port="$(get_current_port)"
   domain="$(get_current_domain)"
-  update_info="$(get_update_info)"
+  update_info="$(get_update_info_menu)"
   update_status="${update_info%%|*}"
   update_version="$(printf '%s' "$update_info" | awk -F'|' '{print $2}')"
 

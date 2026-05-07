@@ -183,12 +183,17 @@ ensure_ssh_setting() {
 format_bar() {
   local current="$1"
   local total="$2"
-  local width=26
-  local filled=$(( current * width / total ))
-  local empty=$(( width - filled ))
-  local bar=""
-  for ((i=0; i<filled; i++)); do bar+="█"; done
-  for ((i=0; i<empty; i++)); do bar+="·"; done
+  local width="${3:-20}"
+  local filled empty bar="" i
+
+  (( total <= 0 )) && total=1
+  (( current < 0 )) && current=0
+  (( current > total )) && current="$total"
+
+  filled=$(( current * width / total ))
+  empty=$(( width - filled ))
+  for ((i=0; i<filled; i++)); do bar+="#"; done
+  for ((i=0; i<empty; i++)); do bar+="-"; done
   printf "%s" "$bar"
 }
 
@@ -197,13 +202,46 @@ progress_start() {
   CURRENT_STEP=0
 }
 
+progress_render_step() {
+  local shown_step="$1"
+  local total="$2"
+  local msg="$3"
+  local spin="${4:-}"
+  local cols bar_width prefix visible_prefix max_msg clean_msg bar line
+
+  cols="$(tput cols 2>/dev/null || echo 80)"
+  [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+  (( cols < 32 )) && cols=32
+
+  bar_width=20
+  (( cols < 72 )) && bar_width=14
+  (( cols < 52 )) && bar_width=10
+
+  bar="$(format_bar "$shown_step" "$total" "$bar_width")"
+  prefix="${CYAN}[${bar}]${NC} ${BOLD}$(printf '%02d/%02d' "$shown_step" "$total")${NC} "
+  visible_prefix="$(strip_ansi "$prefix")"
+  clean_msg="$(printf '%s' "$msg" | tr '\r\n' '  ')"
+  max_msg=$(( cols - ${#visible_prefix} - ${#spin} - 2 ))
+  (( max_msg < 0 )) && max_msg=0
+  if (( ${#clean_msg} > max_msg )); then
+    if (( max_msg > 3 )); then
+      clean_msg="${clean_msg:0:max_msg-3}..."
+    else
+      clean_msg="${clean_msg:0:max_msg}"
+    fi
+  fi
+
+  line="${prefix}${clean_msg}"
+  [[ -n "$spin" ]] && line+=" ${spin}"
+  printf "\r\033[2K%b" "$line"
+}
+
 run_step() {
   local msg="$1"
   local cmd="$2"
-  local spinner='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  local spinner='|/-\\'
   local spin_idx=0
   local pid
-  local bar
   local next_step=$((CURRENT_STEP + 1))
 
   (
@@ -211,25 +249,18 @@ run_step() {
   ) >> "$LOG_FILE" 2>&1 &
   pid=$!
 
-  # linha inicial
-  bar="$(format_bar "$CURRENT_STEP" "$TOTAL_STEPS")"
-  printf "${CYAN}[%s]${NC} ${BOLD}%d/%d${NC} %s " \
-    "$bar" "$next_step" "$TOTAL_STEPS" "$msg"
+  progress_render_step "$CURRENT_STEP" "$TOTAL_STEPS" "$msg" "${spinner:$spin_idx:1}"
 
   while kill -0 "$pid" >/dev/null 2>&1; do
-    printf "%s" "${spinner:$spin_idx:1}"
-    printf "\b"  # volta 1 char (compatível com tudo)
+    progress_render_step "$CURRENT_STEP" "$TOTAL_STEPS" "$msg" "${spinner:$spin_idx:1}"
     spin_idx=$(( (spin_idx + 1) % ${#spinner} ))
-    sleep 0.2
+    sleep 0.12
   done
 
-  wait "$pid"
+  wait "$pid" >/dev/null 2>&1 || true
   CURRENT_STEP=$next_step
-
-  # atualiza barra final (sem ✔)
-  bar="$(format_bar "$CURRENT_STEP" "$TOTAL_STEPS")"
-  printf "\r${CYAN}[%s]${NC} ${BOLD}%d/%d${NC} %s        \n" \
-    "$bar" "$CURRENT_STEP" "$TOTAL_STEPS" "$msg"
+  progress_render_step "$CURRENT_STEP" "$TOTAL_STEPS" "$msg" ""
+  printf "\n"
 
   log "STEP OK: $msg"
 }
@@ -241,13 +272,13 @@ pause() {
 }
 
 wait_key_menu() {
-  local first second opt
+  local first="" second="" opt=""
 
   while true; do
-    read -rsn1 first
+    IFS= read -r -s -n 1 first || true
     case "$first" in
       $'\x1b')
-        read -rsn2 -t 0.001 _ || true
+        read -r -s -n 2 -t 0.001 _ || true
         ;;
       [0-9])
         printf "%s" "$first"
@@ -258,23 +289,16 @@ wait_key_menu() {
     esac
   done
 
-  while true; do
-    read -rsn1 second
-    case "$second" in
-      $'\x1b')
-        read -rsn2 -t 0.001 _ || true
-        ;;
-      [0-9])
-        printf "%s" "$second"
-        break
-        ;;
-      *)
-        ;;
-    esac
-  done
+  # Aceita opções com 1 dígito sem travar. Se for digitado 03/10,
+  # o segundo dígito é capturado em uma janela curta.
+  if IFS= read -r -s -n 1 -t 0.12 second 2>/dev/null && [[ "$second" =~ ^[0-9]$ ]]; then
+    printf "%s\n" "$second"
+    opt="${first}${second}"
+  else
+    printf "\n"
+    opt="$first"
+  fi
 
-  printf "\n"
-  opt="${first}${second}"
   case "$opt" in
     00) MENU_KEY="0" ;;
     01|02|03|04|05|06|07|08|09) MENU_KEY="${opt#0}" ;;
@@ -288,7 +312,7 @@ get_cpu_usage_percent() {
   read -r cpu user nice system idle iowait irq softirq steal _ < /proc/stat
   total1=$((user + nice + system + idle + iowait + irq + softirq + steal))
   idle1=$((idle + iowait))
-  sleep 0.2
+  sleep 0.03
   read -r cpu user nice system idle iowait irq softirq steal _ < /proc/stat
   total2=$((user + nice + system + idle + iowait + irq + softirq + steal))
   idle2=$((idle + iowait))
@@ -1505,7 +1529,7 @@ reinstaller_open_menu() {
   run_step "Validando instalação" "test -x /usr/local/bin/vps-reinstaller"
   echo
   ok "Reinstalador instalado. Abrindo o menu agora..."
-  sleep 1
+  sleep 0.2
   launch_external_menu "Menu Formatar Servidor" "/usr/local/bin/vps-reinstaller"
 }
 
@@ -1544,7 +1568,7 @@ dragoncore_open_menu() {
   run_step "Validando instalação" "test -x /opt/DragonCore/menu -o -x /bin/menu"
   echo
   ok "DragonCoreSSH-Beta instalado. Abrindo o menu agora..."
-  sleep 1
+  sleep 0.2
   launch_external_menu "Menu DragonCoreSSH-Beta" "if [ -x /opt/DragonCore/menu ]; then /opt/DragonCore/menu; elif [ -x /bin/menu ]; then bash /bin/menu; else exit 1; fi"
   sync_dragoncore_systemd
 }
@@ -2241,7 +2265,6 @@ toggle_limiter_installation() {
 limiter_menu() {
   while true; do
     local width top mid bot action_label xray_state users_count
-    sync_external_systemd_integrations >/dev/null 2>&1 || true
     action_label="Instalar limiter"
     if limiter_installed || limiter_active; then
       action_label="Remover limiter"
@@ -2284,7 +2307,6 @@ limiter_menu() {
 main_menu() {
   while true; do
     local width top mid bot
-    sync_external_systemd_integrations >/dev/null 2>&1 || true
     header
     width="$(menu_width)"
     top="╔$(hline $((width-2)))╗"

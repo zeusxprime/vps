@@ -218,7 +218,7 @@ get_cpu_usage() {
   read -r cpu user nice system idle iowait irq softirq steal _ < /proc/stat 2>/dev/null || { echo "0%"; return; }
   total1=$((user + nice + system + idle + iowait + irq + softirq + steal))
   idle1=$((idle + iowait))
-  sleep 0.08
+  sleep 0.03
   read -r cpu user nice system idle iowait irq softirq steal _ < /proc/stat 2>/dev/null || { echo "0%"; return; }
   total2=$((user + nice + system + idle + iowait + irq + softirq + steal))
   idle2=$((idle + iowait))
@@ -268,8 +268,7 @@ show_menu() {
   echo "  $mid"
   echo "  $(two_col_line "Sistema [${os_label}]" "Kernel [${kernel}]" "$width")"
   echo "  $(two_col_line "CPU [${cpu}]" "RAM/SWAP [${ram}]" "$width")"
-  echo "  $(two_col_line "Disco [${disk}]" "Pasta [${INSTALL_DIR}]" "$width")"
-  echo "  $(two_col_line "Git [${git_status}]" "VPS AWS [${aws_status}]" "$width")"
+  echo "  $(two_col_line "Disco [${disk}]" "" "$width")"
   echo "  $mid"
   echo "  $(two_col_line "$(menu_item 1 'Atualizar servidor')" "" "$width")"
   echo "  $(two_col_line "$(menu_item 2 'Reiniciar servidor')" "" "$width")"
@@ -284,9 +283,7 @@ show_menu() {
 
 read_menu_option() {
   local prompt="${1:-Opção: }"
-  local opt=""
-  local ch=""
-  local code=""
+  local first="" second="" opt=""
 
   # Limpa qualquer tecla pendente no buffer para evitar inverter 03 -> 30.
   while IFS= read -r -s -n 1 -t 0.001 _ < /dev/tty 2>/dev/null; do :; done
@@ -294,54 +291,72 @@ read_menu_option() {
   printf '%s%s%s' "$CYAN_FG" "$prompt" "$RESET_FMT" > /dev/tty
 
   while true; do
-    IFS= read -r -s -n 1 ch < /dev/tty || true
-    case "$ch" in
+    IFS= read -r -s -n 1 first < /dev/tty || true
+    case "$first" in
       $'\x1b')
         read -r -s -n 2 -t 0.001 _ < /dev/tty || true
         ;;
-      $'\x7f'|$'\b')
-        if (( ${#opt} > 0 )); then
-          opt="${opt:0:${#opt}-1}"
-          printf '\b \b' > /dev/tty
-        fi
-        ;;
       [0-9])
-        if (( ${#opt} < 2 )); then
-          opt+="$ch"
-          printf '%s' "$ch" > /dev/tty
-        fi
-        if (( ${#opt} == 2 )); then
-          printf '\n' > /dev/tty
-          code="$opt"
-          printf '%s' "$code"
-          return 0
-        fi
+        printf '%s' "$first" > /dev/tty
+        break
         ;;
       *)
         ;;
     esac
   done
+
+  # Aceita 1 dígito imediatamente. Se o usuário digitar 03, 04, 10 etc.,
+  # captura o segundo dígito sem criar atraso perceptível nos menus.
+  if IFS= read -r -s -n 1 -t 0.12 second < /dev/tty 2>/dev/null && [[ "$second" =~ ^[0-9]$ ]]; then
+    printf '%s\n' "$second" > /dev/tty
+    opt="${first}${second}"
+  else
+    printf '\n' > /dev/tty
+    opt="$first"
+  fi
+
+  case "$opt" in
+    00) printf '0' ;;
+    01|02|03|04|05|06|07|08|09) printf '%s' "${opt#0}" ;;
+    *) printf '%s' "$opt" ;;
+  esac
 }
 
 progress_line() {
   local percent="$1"
   local message="$2"
-  local width=22 filled empty
+  local cols width filled empty bar prefix max_msg msg line
 
   (( percent < 0 )) && percent=0
   (( percent > 100 )) && percent=100
 
+  cols="$(tput cols 2>/dev/null || echo 80)"
+  [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+  (( cols < 32 )) && cols=32
+
+  width=22
+  (( cols < 64 )) && width=14
+  (( cols < 48 )) && width=10
+
   filled=$(( percent * width / 100 ))
   empty=$(( width - filled ))
+  bar=""
+  if (( filled > 0 )); then bar+="$(printf '%*s' "$filled" '' | tr ' ' '#')"; fi
+  if (( empty > 0 )); then bar+="$(printf '%*s' "$empty" '' | tr ' ' '-')"; fi
 
-  printf '\r\033[2K['
-  if (( filled > 0 )); then
-    printf '%*s' "$filled" '' | tr ' ' '#'
+  prefix="[${bar}] $(printf '%3d' "$percent")% - "
+  msg="$(printf '%s' "$message" | tr '\r\n' '  ')"
+  max_msg=$(( cols - ${#prefix} - 1 ))
+  (( max_msg < 0 )) && max_msg=0
+  if (( ${#msg} > max_msg )); then
+    if (( max_msg > 3 )); then
+      msg="${msg:0:max_msg-3}..."
+    else
+      msg="${msg:0:max_msg}"
+    fi
   fi
-  if (( empty > 0 )); then
-    printf '%*s' "$empty" '' | tr ' ' '-'
-  fi
-  printf '] %3d%% - %s' "$percent" "$message"
+  line="${prefix}${msg}"
+  printf '\r\033[2K%s' "$line"
 }
 
 run_progress_command() {
@@ -547,12 +562,12 @@ main_loop() {
     opt="$(read_menu_option "Opção: ")"
 
     case "$opt" in
-      01) update_server ;;
-      02) reboot_server ;;
-      03) run_script "GERENCIAR GIT" "$SCRIPT_GIT" ;;
-      04) run_script "GERENCIAR VPS AWS" "$SCRIPT_AWS" ;;
-      00) safe_clear; exit 0 ;;
-      *) echo "Opção inválida."; sleep 1 ;;
+      01|1) update_server ;;
+      02|2) reboot_server ;;
+      03|3) run_script "GERENCIAR GIT" "$SCRIPT_GIT" ;;
+      04|4) run_script "GERENCIAR VPS AWS" "$SCRIPT_AWS" ;;
+      00|0) safe_clear; exit 0 ;;
+      *) echo "Opção inválida."; sleep 0.3 ;;
     esac
   done
 }
