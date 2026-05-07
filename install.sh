@@ -7,10 +7,10 @@ BIN_PATH="/usr/local/bin/gestorvps"
 TMP_DIR="$(mktemp -d)"
 
 # Instalador compatível com:
-# bash <(curl -sL https://raw.githubusercontent.com/yzeusy/vps/refs/heads/main/install.sh)
+# bash <(curl -sL https://raw.githubusercontent.com/yzeusy/vps/main/install.sh)
 # Não usa cd em /dev/fd ou /proc/... porque esse caminho pode sumir durante a execução.
-RAW_BASE_PRIMARY="https://raw.githubusercontent.com/yzeusy/vps/refs/heads/main"
-RAW_BASE_FALLBACK="https://raw.githubusercontent.com/yzeusy/vps/main"
+RAW_BASE_PRIMARY="https://raw.githubusercontent.com/yzeusy/vps/main"
+RAW_BASE_FALLBACK="https://raw.githubusercontent.com/yzeusy/vps/refs/heads/main"
 
 NC=$'\e[0m'
 CYAN=$'\e[1;36m'
@@ -28,7 +28,7 @@ fail() {
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
-    fail "execute como root: sudo bash <(curl -sL https://raw.githubusercontent.com/yzeusy/vps/refs/heads/main/install.sh)"
+    fail "execute como root: sudo bash <(curl -sL https://raw.githubusercontent.com/yzeusy/vps/main/install.sh)"
   fi
 }
 
