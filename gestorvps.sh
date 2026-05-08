@@ -273,8 +273,9 @@ show_menu() {
   echo "  $mid"
   echo "  $(two_col_line "$(menu_item 1 'Atualizar servidor')" "" "$width")"
   echo "  $(two_col_line "$(menu_item 2 'Reiniciar servidor')" "" "$width")"
-  echo "  $(two_col_line "$(menu_item 3 'Gerenciar Git')" "" "$width")"
-  echo "  $(two_col_line "$(menu_item 4 'Gerenciar VPS AWS')" "" "$width")"
+  echo "  $(two_col_line "$(menu_item 3 'CheckUser')" "" "$width")"
+  echo "  $(two_col_line "$(menu_item 4 'Gerenciar Git')" "" "$width")"
+  echo "  $(two_col_line "$(menu_item 5 'Gerenciar VPS')" "" "$width")"
   echo "  $(two_col_line "" "" "$width")"
   echo "  $mid"
   echo "  $(two_col_line "$(menu_item 0 'Sair')" "" "$width")"
@@ -437,7 +438,6 @@ update_server() {
   run_progress_command 85 100 "Limpando pacotes antigos" "$pkg_clean" || return
   progress_line 100 "Servidor atualizado."
   printf '\n'
-  pause
 }
 
 reboot_server() {
@@ -547,8 +547,9 @@ main_loop() {
     case "$opt" in
       01|1) update_server ;;
       02|2) reboot_server ;;
-      03|3) run_script "GERENCIAR GIT" "$SCRIPT_GIT" ;;
-      04|4) run_script "GERENCIAR VPS AWS" "$SCRIPT_AWS" ;;
+	  03|3) clear; bash <(curl -sL https://raw.githubusercontent.com/zeusxprime/checkuser/refs/heads/master/install.sh) ;;
+      04|4) run_script "GERENCIAR GIT" "$SCRIPT_GIT" ;;
+      05|5) run_script "GERENCIAR VPS AWS" "$SCRIPT_AWS" ;;
       00|0) safe_clear; exit 0 ;;
       *) echo "Opção inválida."; sleep 0.3 ;;
     esac
