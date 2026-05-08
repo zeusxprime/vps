@@ -271,12 +271,11 @@ show_menu() {
   echo "  $(two_col_line "CPU [${cpu}]" "RAM/SWAP [${ram}]" "$width")"
   echo "  $(two_col_line "Disco [${disk}]" "" "$width")"
   echo "  $mid"
-  echo "  $(two_col_line "$(menu_item 1 'Atualizar servidor')" "" "$width")"
-  echo "  $(two_col_line "$(menu_item 2 'Reiniciar servidor')" "" "$width")"
+  echo "  $(two_col_line "$(menu_item 1 'Atualizar servidor')" "$(menu_item 6 'DragonSSH')" "$width")"
+  echo "  $(two_col_line "$(menu_item 2 'Reiniciar servidor')" "$(menu_item 7 'Gestor Bot')" "$width")"
   echo "  $(two_col_line "$(menu_item 3 'CheckUser')" "" "$width")"
   echo "  $(two_col_line "$(menu_item 4 'Gerenciar Git')" "" "$width")"
   echo "  $(two_col_line "$(menu_item 5 'Gerenciar VPS')" "" "$width")"
-  echo "  $(two_col_line "" "" "$width")"
   echo "  $mid"
   echo "  $(two_col_line "$(menu_item 0 'Sair')" "" "$width")"
   echo "  $bot"
@@ -476,6 +475,58 @@ fix_one_script() {
   return 0
 }
 
+
+run_external_installer() {
+  local label="$1" url="$2" after_cmds="${3:-}" preferred_fetcher="${4:-}" fetcher="" cmd=""
+
+  safe_clear
+  echo "$label"
+  echo
+  echo "Baixando e iniciando instalador externo..."
+  echo
+
+  if [[ -n "$preferred_fetcher" ]]; then
+    fetcher="$preferred_fetcher"
+  elif command -v wget >/dev/null 2>&1; then
+    fetcher="wget -qO-"
+  elif command -v curl >/dev/null 2>&1; then
+    fetcher="curl -fsSL"
+  else
+    echo "wget/curl não encontrado. Instale wget ou curl e tente novamente."
+    pause
+    return
+  fi
+
+  if [[ "$fetcher" == curl* ]] && ! command -v curl >/dev/null 2>&1; then
+    echo "curl não encontrado. Instale curl e tente novamente."
+    pause
+    return
+  fi
+
+  if ! bash <($fetcher "$url"); then
+    echo
+    echo "O instalador externo retornou erro."
+    pause
+    return
+  fi
+
+  # Abre automaticamente o menu instalado, quando o instalador cria o comando.
+  # Informe os comandos separados por |, em ordem de prioridade.
+  if [[ -n "$after_cmds" ]]; then
+    IFS='|' read -r -a _after_list <<< "$after_cmds"
+    for cmd in "${_after_list[@]}"; do
+      [[ -z "$cmd" ]] && continue
+      if bash -lc "command -v ${cmd%% *} >/dev/null 2>&1 || [[ -x ${cmd%% *} ]]"; then
+        clear || true
+        bash -lc "$cmd"
+        return
+      fi
+    done
+  fi
+
+  pause
+}
+
 run_script() {
   local label="$1" path="$2"
 
@@ -547,9 +598,11 @@ main_loop() {
     case "$opt" in
       01|1) update_server ;;
       02|2) reboot_server ;;
-	  03|3) clear; bash <(curl -sL https://raw.githubusercontent.com/zeusxprime/checkuser/refs/heads/master/install.sh) ;;
+      03|3) run_external_installer "CHECKUSER" "https://raw.githubusercontent.com/zeusxprime/checkuser/refs/heads/main/install.sh" "checkuser|/usr/local/bin/checkuser|/bin/checkuser|menu|/bin/menu" "curl -sL" ;;
       04|4) run_script "GERENCIAR GIT" "$SCRIPT_GIT" ;;
       05|5) run_script "GERENCIAR VPS AWS" "$SCRIPT_AWS" ;;
+      06|6) run_external_installer "DRAGONSSH" "https://raw.githubusercontent.com/zeusxprime/ssh/refs/heads/main/install.sh" "menu|/bin/menu|/opt/DragonCore/menu" ;;
+      07|7) run_external_installer "GESTOR BOT" "https://raw.githubusercontent.com/zeusxprime/bot/refs/heads/main/install.sh" "gestorbot|gestor-bot|bot|menu-bot|/usr/local/bin/gestorbot|/bin/gestorbot|/bin/bot" ;;
       00|0) safe_clear; exit 0 ;;
       *) echo "Opção inválida."; sleep 0.3 ;;
     esac
