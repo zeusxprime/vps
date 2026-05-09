@@ -101,36 +101,6 @@ check_command() {
   command -v "$1" >/dev/null 2>&1
 }
 
-
-detect_architecture() {
-  local machine deb_arch
-  machine="$(uname -m 2>/dev/null || true)"
-  deb_arch="$(dpkg --print-architecture 2>/dev/null || true)"
-
-  case "$machine:$deb_arch" in
-    x86_64:*|amd64:*|*:amd64)
-      SYSTEM_ARCH="amd64"
-      ;;
-    aarch64:*|arm64:*|*:arm64)
-      SYSTEM_ARCH="arm64"
-      ;;
-    *)
-      err "Arquitetura não suportada: ${machine:-desconhecida}. Use x64/amd64 ou ARM64/aarch64."
-      exit 1
-      ;;
-  esac
-}
-
-require_supported_ubuntu_version() {
-  case "${OS_VERSION:-}" in
-    20.04|22.04|24.04) ;;
-    *)
-      err "Ubuntu ${OS_VERSION:-desconhecido} não suportado. Use Ubuntu 20.04, 22.04 ou 24.04."
-      exit 1
-      ;;
-  esac
-}
-
 detect_os() {
   if [[ -f /etc/os-release ]]; then
     . /etc/os-release
@@ -138,21 +108,13 @@ detect_os() {
     OS_NAME="${NAME:-unknown}"
     OS_VERSION="${VERSION_ID:-unknown}"
     PRETTY_OS="${PRETTY_NAME:-$OS_NAME $OS_VERSION}"
-    detect_architecture
   else
     err "Não foi possível detectar o sistema operacional."
     exit 1
   fi
 
   case "$OS_ID" in
-    ubuntu)
-      require_supported_ubuntu_version
-      export DEBIAN_FRONTEND=noninteractive
-      PKG_UPDATE="apt update -y"
-      PKG_UPGRADE="apt full-upgrade -y"
-      PKG_INSTALL="apt install -y"
-      ;;
-    debian)
+    ubuntu|debian)
       export DEBIAN_FRONTEND=noninteractive
       PKG_UPDATE="apt update -y"
       PKG_UPGRADE="apt full-upgrade -y"
@@ -644,11 +606,10 @@ kernel_meta_ready() {
       dpkg -s linux-aws >/dev/null 2>&1 && dpkg -s linux-headers-aws >/dev/null 2>&1
       ;;
     debian)
-      local arch="${SYSTEM_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo amd64)}"
-      if apt-cache show "linux-image-cloud-${arch}" >/dev/null 2>&1; then
-        dpkg -s "linux-image-cloud-${arch}" >/dev/null 2>&1 && dpkg -s "linux-headers-cloud-${arch}" >/dev/null 2>&1
+      if apt-cache show linux-image-cloud-amd64 >/dev/null 2>&1; then
+        dpkg -s linux-image-cloud-amd64 >/dev/null 2>&1 && dpkg -s linux-headers-cloud-amd64 >/dev/null 2>&1
       else
-        dpkg -s "linux-image-${arch}" >/dev/null 2>&1 && dpkg -s "linux-headers-${arch}" >/dev/null 2>&1
+        dpkg -s linux-image-amd64 >/dev/null 2>&1 && dpkg -s linux-headers-amd64 >/dev/null 2>&1
       fi
       ;;
     amzn|amazon)
@@ -667,12 +628,11 @@ apply_kernel_auto_now() {
       bash -c "$PKG_INSTALL linux-aws linux-headers-aws"
       ;;
     debian)
-      local arch="${SYSTEM_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo amd64)}"
       kernel_meta_ready && return 0
-      if apt-cache show "linux-image-cloud-${arch}" >/dev/null 2>&1; then
-        bash -c "$PKG_INSTALL linux-image-cloud-${arch} linux-headers-cloud-${arch}"
+      if apt-cache show linux-image-cloud-amd64 >/dev/null 2>&1; then
+        bash -c "$PKG_INSTALL linux-image-cloud-amd64 linux-headers-cloud-amd64"
       else
-        bash -c "$PKG_INSTALL linux-image-${arch} linux-headers-${arch}"
+        bash -c "$PKG_INSTALL linux-image-amd64 linux-headers-amd64"
       fi
       ;;
     amzn|amazon)

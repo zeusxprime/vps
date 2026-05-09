@@ -42,15 +42,14 @@ require_supported_ubuntu() {
   local version_id major
   [[ -r /etc/os-release ]] || { echo "Sistema não suportado."; exit 1; }
   . /etc/os-release
-  [[ "${ID:-}" == "ubuntu" ]] || { echo "Este script suporta apenas Ubuntu 20.04, 22.04 e 24.04."; exit 1; }
+  [[ "${ID:-}" == "ubuntu" ]] || { echo "Este script suporta apenas Ubuntu 20 a 24."; exit 1; }
   version_id="${VERSION_ID:-}"
-  case "$version_id" in
-    20.04|22.04|24.04) ;;
-    *)
-      echo "Versão do Ubuntu não suportada: ${version_id}. Use Ubuntu 20.04, 22.04 ou 24.04."
-      exit 1
-      ;;
-  esac
+  major="${version_id%%.*}"
+  [[ "$major" =~ ^[0-9]+$ ]] || { echo "Não foi possível detectar a versão do Ubuntu."; exit 1; }
+  if (( major < 20 || major > 24 )); then
+    echo "Versão do Ubuntu não suportada: ${version_id}. Use Ubuntu 20, 22 ou 24."
+    exit 1
+  fi
 }
 
 sanitize_domain_input() {
@@ -603,7 +602,7 @@ get_latest_gitea_version() {
   case "$(uname -m)" in
     x86_64|amd64) arch="amd64" ;;
     aarch64|arm64) arch="arm64" ;;
-    *) echo "$GITEA_VERSION_DEFAULT"; return 0 ;;
+    *) arch="amd64" ;; # fallback seguro
   esac
   url="https://dl.gitea.com/gitea/latest/gitea-linux-${arch}"
   latest="$(curl -fsSLI "$url" 2>/dev/null \
