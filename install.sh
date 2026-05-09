@@ -26,6 +26,35 @@ fail() {
   exit 1
 }
 
+
+require_supported_system() {
+  local os_id="" version_id="" arch=""
+
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    os_id="${ID:-}"
+    version_id="${VERSION_ID:-}"
+  else
+    fail "não foi possível detectar o sistema operacional."
+  fi
+
+  if [[ "$os_id" != "ubuntu" ]]; then
+    fail "este instalador suporta Ubuntu 20.04, 22.04 e 24.04. Sistema detectado: ${PRETTY_NAME:-desconhecido}."
+  fi
+
+  case "$version_id" in
+    20.04|22.04|24.04) ;;
+    *) fail "Ubuntu ${version_id} não suportado. Use Ubuntu 20.04, 22.04 ou 24.04." ;;
+  esac
+
+  arch="$(uname -m 2>/dev/null || true)"
+  case "$arch" in
+    x86_64|amd64|aarch64|arm64) ;;
+    *) fail "arquitetura não suportada: ${arch}. Use x64/amd64 ou ARM64/aarch64." ;;
+  esac
+}
+
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
     fail "execute como root: sudo bash <(curl -sL https://raw.githubusercontent.com/zeusxprime/vps/main/install.sh)"
@@ -168,6 +197,7 @@ EOFWRAP
 
 main() {
   require_root
+  require_supported_system
   clear || true
 
   ensure_base_packages
