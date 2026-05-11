@@ -14,6 +14,33 @@ SCRIPT_GIT="${SCRIPTS_DIR}/git.sh"
 SCRIPT_AWS="${SCRIPTS_DIR}/aws.sh"
 LOG_FILE="/var/log/gestorvps.log"
 
+# Tokens dos repositórios privados no GitHub.
+# Troque apenas o texto entre aspas pelo token correto de cada instalador.
+# Se o instalador estiver público, pode deixar como está.
+GESTORVPS_GITHUB_TOKEN="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"
+CHECKUSER_GITHUB_TOKEN="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"
+DRAGONSSH_GITHUB_TOKEN="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"
+BOT_GITHUB_TOKEN="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"
+
+is_placeholder_token() {
+  case "${1:-}" in
+    ""|TOKEN_DO_*|SEU_TOKEN*|tokenaqui|TOKEN_AQUI) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+normalize_github_tokens() {
+  local var val
+  for var in GESTORVPS_GITHUB_TOKEN CHECKUSER_GITHUB_TOKEN DRAGONSSH_GITHUB_TOKEN BOT_GITHUB_TOKEN; do
+    val="${!var:-}"
+    if is_placeholder_token "$val"; then
+      printf -v "$var" '%s' ""
+    fi
+  done
+}
+
+normalize_github_tokens
+
 # Cores do layout, seguindo o padrão visual do menu Git/Gitea.
 GREEN_FG=$'\e[1;32m'
 YELLOW_FG=$'\e[1;33m'
@@ -273,7 +300,7 @@ show_menu() {
   echo "  $mid"
   echo "  $(two_col_line "$(menu_item 1 'Atualizar servidor')" "$(menu_item 6 'DragonSSH')" "$width")"
   echo "  $(two_col_line "$(menu_item 2 'Reiniciar servidor')" "$(menu_item 7 'Gestor Bot')" "$width")"
-  echo "  $(two_col_line "$(menu_item 3 'CheckUser')" "" "$width")"
+  echo "  $(two_col_line "$(menu_item 3 'CheckUser')" "$(menu_item 8 'Gerenciar BadVPN')" "$width")"
   echo "  $(two_col_line "$(menu_item 4 'Gerenciar Git')" "" "$width")"
   echo "  $(two_col_line "$(menu_item 5 'Gerenciar VPS')" "" "$width")"
   echo "  $mid"
@@ -476,8 +503,10 @@ fix_one_script() {
 }
 
 
+
 run_external_installer() {
-  local label="$1" url="$2" after_cmds="${3:-}" preferred_fetcher="${4:-}" fetcher="" cmd=""
+  local label="$1" url="$2" after_cmds="${3:-}" preferred_fetcher="${4:-}" token_env="${5:-}"
+  local cmd="" tmp_installer="" token="" need_token="0"
 
   safe_clear
   echo "$label"
@@ -485,32 +514,109 @@ run_external_installer() {
   echo "Baixando e iniciando instalador externo..."
   echo
 
-  if [[ -n "$preferred_fetcher" ]]; then
-    fetcher="$preferred_fetcher"
-  elif command -v wget >/dev/null 2>&1; then
-    fetcher="wget -qO-"
-  elif command -v curl >/dev/null 2>&1; then
-    fetcher="curl -fsSL"
-  else
-    echo "wget/curl não encontrado. Instale wget ou curl e tente novamente."
-    pause
-    return
-  fi
-
-  if [[ "$fetcher" == curl* ]] && ! command -v curl >/dev/null 2>&1; then
+  if ! command -v curl >/dev/null 2>&1; then
     echo "curl não encontrado. Instale curl e tente novamente."
     pause
     return
   fi
 
-  if ! bash <($fetcher "$url"); then
-    echo
-    echo "O instalador externo retornou erro."
-    pause
-    return
+  tmp_installer="$(mktemp /tmp/gestorvps-${label// /_}.XXXXXX.sh)" || { echo "Falha ao criar temporário."; pause; return; }
+
+  # Cada instalador pode ter seu próprio token, sem salvar no servidor.
+  if [[ -n "$token_env" ]]; then
+    token="${!token_env:-}"
   fi
 
+  download_with_token() {
+    local download_url="$1" output_file="$2" gh_token="${3:-}"
+
+    # Todos os instaladores externos são baixados em RAW.
+    # Repo público: curl normal.
+    # Repo privado: curl RAW com Authorization Bearer usando o token específico da opção.
+    if [[ -n "$gh_token" ]]; then
+      curl -fsSL --retry 3 --connect-timeout 15 \
+        -H "Authorization: Bearer ${gh_token}" \
+        -H "Accept: application/vnd.github.raw" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        "$download_url" -o "$output_file"
+    else
+      curl -fsSL --retry 3 --connect-timeout 15 "$download_url" -o "$output_file"
+    fi
+  }
+
+  if [[ -n "$token" ]]; then
+    if ! download_with_token "$url" "$tmp_installer" "$token"; then
+      echo "Falha ao baixar usando o token de ${token_env}."
+      rm -f "$tmp_installer" 2>/dev/null || true
+      pause
+      return
+    fi
+  else
+    if ! download_with_token "$url" "$tmp_installer" ""; then
+      need_token="1"
+    fi
+  fi
+
+  if [[ "$need_token" == "1" ]]; then
+    if [[ "$url" == *"githubusercontent.com"* || "$url" == *"github.com"* ]]; then
+      echo "Não foi possível baixar sem token."
+      echo "Se esse repositório estiver privado, informe o token somente leitura deste instalador."
+      echo
+      if [[ -n "$token_env" ]]; then
+        read -r -s -p "Token GitHub para ${label}: " token < /dev/tty || true
+        echo > /dev/tty
+      else
+        read -r -s -p "Token GitHub: " token < /dev/tty || true
+        echo > /dev/tty
+      fi
+      [[ -z "$token" ]] && { echo "Token vazio. Cancelado."; rm -f "$tmp_installer"; pause; return; }
+      if ! download_with_token "$url" "$tmp_installer" "$token"; then
+        echo "Falha ao baixar mesmo com token. Verifique permissão de leitura do repositório."
+        rm -f "$tmp_installer" 2>/dev/null || true
+        pause
+        return
+      fi
+    else
+      echo "Falha ao baixar o instalador externo."
+      rm -f "$tmp_installer" 2>/dev/null || true
+      pause
+      return
+    fi
+  fi
+
+  chmod +x "$tmp_installer" 2>/dev/null || true
+
+  # Passa também GITHUB_TOKEN para o instalador chamado, caso ele precise clonar/baixar o próprio repo privado.
+  if [[ -n "$token" && -n "$token_env" ]]; then
+    if ! env GITHUB_TOKEN="$token" "$token_env=$token" bash "$tmp_installer"; then
+      echo
+      echo "O instalador externo retornou erro."
+      rm -f "$tmp_installer" 2>/dev/null || true
+      pause
+      return
+    fi
+  elif [[ -n "$token" ]]; then
+    if ! env GITHUB_TOKEN="$token" bash "$tmp_installer"; then
+      echo
+      echo "O instalador externo retornou erro."
+      rm -f "$tmp_installer" 2>/dev/null || true
+      pause
+      return
+    fi
+  else
+    if ! bash "$tmp_installer"; then
+      echo
+      echo "O instalador externo retornou erro."
+      rm -f "$tmp_installer" 2>/dev/null || true
+      pause
+      return
+    fi
+  fi
+
+  rm -f "$tmp_installer" 2>/dev/null || true
+
   # Abre automaticamente o menu instalado, quando o instalador cria o comando.
+  # Gestor VPS usa gestorvps. Gestor Bot usa somente botmenu.
   # Informe os comandos separados por |, em ordem de prioridade.
   if [[ -n "$after_cmds" ]]; then
     IFS='|' read -r -a _after_list <<< "$after_cmds"
@@ -547,6 +653,21 @@ run_script() {
   echo
   bash "$path"
   pause
+}
+
+run_badvpn_menu() {
+  safe_clear
+  echo "GERENCIAR BADVPN"
+  echo
+
+  if [[ ! -f "$SCRIPT_AWS" ]]; then
+    echo "Arquivo aws.sh não encontrado."
+    pause
+    return
+  fi
+
+  fix_one_script "$SCRIPT_AWS" >/dev/null 2>&1 || true
+  bash "$SCRIPT_AWS" --badvpn-menu
 }
 
 install_or_update() {
@@ -598,11 +719,12 @@ main_loop() {
     case "$opt" in
       01|1) update_server ;;
       02|2) reboot_server ;;
-      03|3) run_external_installer "CHECKUSER" "https://raw.githubusercontent.com/zeusxprime/checkuser/refs/heads/main/install.sh" "checkuser|/usr/local/bin/checkuser|/bin/checkuser|menu|/bin/menu" "curl -sL" ;;
+      03|3) run_external_installer "CHECKUSER" "https://raw.githubusercontent.com/zeusxprime/checkuser/refs/heads/main/install.sh" "checkuser|/usr/local/bin/checkuser|/bin/checkuser|menu|/bin/menu" "curl -sL" "CHECKUSER_GITHUB_TOKEN" ;;
       04|4) run_script "GERENCIAR GIT" "$SCRIPT_GIT" ;;
       05|5) run_script "GERENCIAR VPS AWS" "$SCRIPT_AWS" ;;
-      06|6) run_external_installer "DRAGONSSH" "https://raw.githubusercontent.com/zeusxprime/ssh/refs/heads/main/install.sh" "menu|/bin/menu|/opt/DragonCore/menu" ;;
-      07|7) run_external_installer "GESTOR BOT" "https://raw.githubusercontent.com/zeusxprime/bot/refs/heads/main/install.sh" "gestorbot|gestor-bot|bot|menu-bot|/usr/local/bin/gestorbot|/bin/gestorbot|/bin/bot" ;;
+      06|6) run_external_installer "DRAGONSSH" "https://raw.githubusercontent.com/zeusxprime/ssh/refs/heads/main/install.sh" "menu|/bin/menu|/opt/DragonCore/menu" "" "DRAGONSSH_GITHUB_TOKEN" ;;
+      07|7) run_external_installer "GESTOR BOT" "https://raw.githubusercontent.com/zeusxprime/bot/refs/heads/main/bot.sh" "botmenu|/usr/local/bin/botmenu" "curl -sL" "BOT_GITHUB_TOKEN" ;;
+      08|8) run_badvpn_menu ;;
       00|0) safe_clear; exit 0 ;;
       *) echo "Opção inválida."; sleep 0.3 ;;
     esac

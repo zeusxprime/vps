@@ -2334,4 +2334,10 @@ main_menu() {
 
 need_root
 detect_os
+
+if [[ "${1:-}" == "--badvpn-menu" ]]; then
+  badvpn_menu
+  exit 0
+fi
+
 main_menu
