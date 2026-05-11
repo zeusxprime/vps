@@ -15,7 +15,7 @@ RAW_BASE_FALLBACK="https://raw.githubusercontent.com/zeusxprime/vps/refs/heads/m
 # Token do repositório privado do Gestor VPS.
 # Troque apenas o texto entre aspas pelo token correto.
 # Se o repositório estiver público, pode deixar como está.
-GESTORVPS_GITHUB_TOKEN="TOKEN_DO_VPS"
+GESTORVPS_GITHUB_TOKEN="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"
 
 is_placeholder_token() {
   case "${1:-}" in
