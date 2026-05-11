@@ -3,6 +3,10 @@
 # Instala em /opt/.gestorvps e cria o comando global: gestorvps
 
 set -u
+umask 077
+export GESTORVPS_PROTECTED_BOOT=1
+# Evita vazar tokens em traces acidentais.
+set +x 2>/dev/null || true
 
 APP_NAME="Gestor VPS"
 TITLE="GESTOR VPS"
@@ -13,20 +17,28 @@ SCRIPTS_DIR="${INSTALL_DIR}/scripts"
 SCRIPT_GIT="${SCRIPTS_DIR}/git.sh"
 SCRIPT_AWS="${SCRIPTS_DIR}/aws.sh"
 LOG_FILE="/var/log/gestorvps.log"
+TOKEN_FILE="/etc/gestorvps.tokens"
 
-# Tokens dos repositórios privados no GitHub.
-# Troque apenas o texto entre aspas pelo token correto de cada instalador.
-# Se o instalador estiver público, pode deixar como está.
-GESTORVPS_GITHUB_TOKEN="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"
-CHECKUSER_GITHUB_TOKEN="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"
-DRAGONSSH_GITHUB_TOKEN="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"
-BOT_GITHUB_TOKEN="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"
+# Tokens não ficam dentro deste arquivo para evitar bloqueio do GitHub.
+# Configure pelo menu: opção 9 - Configurar Tokens GitHub.
+GESTORVPS_GITHUB_TOKEN="${GESTORVPS_GITHUB_TOKEN:-}"
+CHECKUSER_GITHUB_TOKEN="${CHECKUSER_GITHUB_TOKEN:-}"
+DRAGONSSH_GITHUB_TOKEN="${DRAGONSSH_GITHUB_TOKEN:-}"
+BOT_GITHUB_TOKEN="${BOT_GITHUB_TOKEN:-}"
 
 is_placeholder_token() {
   case "${1:-}" in
     ""|TOKEN_DO_*|SEU_TOKEN*|tokenaqui|TOKEN_AQUI) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+load_github_tokens() {
+  if [[ -f "$TOKEN_FILE" ]]; then
+    chmod 600 "$TOKEN_FILE" 2>/dev/null || true
+    # shellcheck disable=SC1090
+    source "$TOKEN_FILE" 2>/dev/null || true
+  fi
 }
 
 normalize_github_tokens() {
@@ -39,6 +51,99 @@ normalize_github_tokens() {
   done
 }
 
+save_github_tokens_file() {
+  umask 077
+  cat > "$TOKEN_FILE" <<EOF
+GESTORVPS_GITHUB_TOKEN="${GESTORVPS_GITHUB_TOKEN:-}"
+CHECKUSER_GITHUB_TOKEN="${CHECKUSER_GITHUB_TOKEN:-}"
+DRAGONSSH_GITHUB_TOKEN="${DRAGONSSH_GITHUB_TOKEN:-}"
+BOT_GITHUB_TOKEN="${BOT_GITHUB_TOKEN:-}"
+EOF
+  chmod 600 "$TOKEN_FILE" 2>/dev/null || true
+}
+
+read_token_value() {
+  local label="$1"
+  local current="$2"
+  local value=""
+
+  if [[ -n "$current" ]]; then
+    echo "Token ${label}: já configurado."
+    read -r -p "Trocar token ${label}? [s/N]: " trocar || true
+    [[ ! "$trocar" =~ ^[sS]$ ]] && {
+      printf '%s' "$current"
+      return 0
+    }
+  fi
+
+  read -r -s -p "Cole o token ${label}: " value < /dev/tty || true
+  echo > /dev/tty
+
+  if [[ -z "$value" ]]; then
+    printf '%s' "$current"
+  else
+    printf '%s' "$value"
+  fi
+}
+
+configure_github_tokens() {
+  safe_clear
+  load_github_tokens
+  normalize_github_tokens
+
+  echo "CONFIGURAR TOKENS GITHUB"
+  echo
+  echo "Os tokens serão salvos somente nesta VPS em:"
+  echo "$TOKEN_FILE"
+  echo
+  echo "Permissão aplicada: chmod 600"
+  echo
+
+  GESTORVPS_GITHUB_TOKEN="$(read_token_value "GESTOR VPS" "${GESTORVPS_GITHUB_TOKEN:-}")"
+  CHECKUSER_GITHUB_TOKEN="$(read_token_value "CHECKUSER" "${CHECKUSER_GITHUB_TOKEN:-}")"
+  DRAGONSSH_GITHUB_TOKEN="$(read_token_value "DRAGONSSH" "${DRAGONSSH_GITHUB_TOKEN:-}")"
+  BOT_GITHUB_TOKEN="$(read_token_value "BOT" "${BOT_GITHUB_TOKEN:-}")"
+
+  normalize_github_tokens
+  save_github_tokens_file
+
+  echo
+  echo "Tokens salvos com segurança local."
+  echo "Nenhum token foi gravado dentro do gestorvps.sh."
+  pause
+}
+
+get_or_request_token() {
+  local token_env="$1"
+  local label="$2"
+  local current="${!token_env:-}"
+  local value=""
+
+  load_github_tokens
+  normalize_github_tokens
+  current="${!token_env:-}"
+
+  if ! is_placeholder_token "$current"; then
+    printf '%s' "$current"
+    return 0
+  fi
+
+  echo
+  echo "Token necessário para ${label}."
+  echo "Ele será salvo localmente em $TOKEN_FILE com chmod 600."
+  read -r -s -p "Token GitHub para ${label}: " value < /dev/tty || true
+  echo > /dev/tty
+
+  [[ -z "$value" ]] && return 1
+
+  printf -v "$token_env" '%s' "$value"
+  normalize_github_tokens
+  save_github_tokens_file
+
+  printf '%s' "$value"
+}
+
+load_github_tokens
 normalize_github_tokens
 
 # Cores do layout, seguindo o padrão visual do menu Git/Gitea.
@@ -302,7 +407,7 @@ show_menu() {
   echo "  $(two_col_line "$(menu_item 2 'Reiniciar servidor')" "$(menu_item 7 'Gestor Bot')" "$width")"
   echo "  $(two_col_line "$(menu_item 3 'CheckUser')" "$(menu_item 8 'Gerenciar BadVPN')" "$width")"
   echo "  $(two_col_line "$(menu_item 4 'Gerenciar Git')" "" "$width")"
-  echo "  $(two_col_line "$(menu_item 5 'Gerenciar VPS')" "" "$width")"
+  echo "  $(two_col_line "$(menu_item 5 'Gerenciar VPS')" "$(menu_item 9 'Configurar Tokens')" "$width")"
   echo "  $mid"
   echo "  $(two_col_line "$(menu_item 0 'Sair')" "" "$width")"
   echo "  $bot"
@@ -506,9 +611,12 @@ fix_one_script() {
 
 run_external_installer() {
   local label="$1" url="$2" after_cmds="${3:-}" preferred_fetcher="${4:-}" token_env="${5:-}"
-  local cmd="" tmp_installer="" token="" need_token="0"
+  local tmp_installer="" token="" used_token="" encoded_token="" auth_url=""
 
   safe_clear
+  load_github_tokens
+  normalize_github_tokens
+
   echo "$label"
   echo
   echo "Baixando e iniciando instalador externo..."
@@ -520,64 +628,115 @@ run_external_installer() {
     return
   fi
 
-  tmp_installer="$(mktemp /tmp/gestorvps-${label// /_}.XXXXXX.sh)" || { echo "Falha ao criar temporário."; pause; return; }
+  tmp_installer="$(mktemp /tmp/gestorvps-${label// /_}.XXXXXX.sh)" || {
+    echo "Falha ao criar temporário."
+    pause
+    return
+  }
 
-  # Cada instalador pode ter seu próprio token, sem salvar no servidor.
   if [[ -n "$token_env" ]]; then
     token="${!token_env:-}"
   fi
 
-  download_with_token() {
-    local download_url="$1" output_file="$2" gh_token="${3:-}"
+  if is_placeholder_token "$token"; then
+    token=""
+  fi
 
-    # Todos os instaladores externos são baixados em RAW.
-    # Repo público: curl normal.
-    # Repo privado: curl RAW com Authorization Bearer usando o token específico da opção.
-    if [[ -n "$gh_token" ]]; then
-      curl -fsSL --retry 2 --connect-timeout 10 --max-time 35 \
-        -H "Authorization: Bearer ${gh_token}" \
-        -H "Accept: application/vnd.github.raw" \
-        -H "X-GitHub-Api-Version: 2022-11-28" \
-        "$download_url" -o "$output_file"
+  raw_to_api_url() {
+    local raw_url="$1"
+    local rest owner repo branch file_path
+
+    rest="${raw_url#https://raw.githubusercontent.com/}"
+    owner="${rest%%/*}"
+    rest="${rest#*/}"
+    repo="${rest%%/*}"
+    rest="${rest#*/}"
+
+    if [[ "$rest" == refs/heads/* ]]; then
+      rest="${rest#refs/heads/}"
+      branch="${rest%%/*}"
+      file_path="${rest#*/}"
     else
-      curl -fsSL --retry 2 --connect-timeout 10 --max-time 35 "$download_url" -o "$output_file"
+      branch="${rest%%/*}"
+      file_path="${rest#*/}"
     fi
+
+    if [[ -z "$owner" || -z "$repo" || -z "$branch" || -z "$file_path" || "$owner" == "$raw_url" ]]; then
+      return 1
+    fi
+
+    printf 'https://api.github.com/repos/%s/%s/contents/%s?ref=%s' "$owner" "$repo" "$file_path" "$branch"
   }
 
+  download_public() {
+    local download_url="$1" output_file="$2"
+
+    curl -fsSL \
+      --retry 2 \
+      --connect-timeout 10 \
+      --max-time 60 \
+      "$download_url" \
+      -o "$output_file" </dev/null
+  }
+
+  download_with_token() {
+    local download_url="$1" output_file="$2" gh_token="$3"
+    local api_url=""
+
+    if [[ "$download_url" == https://raw.githubusercontent.com/* ]]; then
+      if api_url="$(raw_to_api_url "$download_url")"; then
+        if curl -fsSL \
+          --retry 2 \
+          --connect-timeout 10 \
+          --max-time 60 \
+          -H "Authorization: Bearer ${gh_token}" \
+          -H "Accept: application/vnd.github.raw" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "$api_url" \
+          -o "$output_file" </dev/null; then
+          return 0
+        fi
+      fi
+    fi
+
+    curl -fsSL \
+      --retry 2 \
+      --connect-timeout 10 \
+      --max-time 60 \
+      -H "Authorization: Bearer ${gh_token}" \
+      -H "Accept: application/vnd.github.raw" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "$download_url" \
+      -o "$output_file" </dev/null
+  }
+
+  # Se o repo for privado, precisa token antes de baixar o instalador.
+  if [[ -n "$token_env" && -z "$token" ]]; then
+    token="$(get_or_request_token "$token_env" "$label" || true)"
+  fi
+
   if [[ -n "$token" ]]; then
-    if ! download_with_token "$url" "$tmp_installer" "$token"; then
+    if download_with_token "$url" "$tmp_installer" "$token"; then
+      used_token="$token"
+    else
+      echo
       echo "Falha ao baixar usando o token de ${token_env}."
+      echo "Verifique se o token tem acesso ao repositório correto e permissão Contents: Read-only."
+      echo "Arquivo:"
+      echo "$url"
       rm -f "$tmp_installer" 2>/dev/null || true
       pause
       return
     fi
   else
-    if ! download_with_token "$url" "$tmp_installer" ""; then
-      need_token="1"
-    fi
-  fi
-
-  if [[ "$need_token" == "1" ]]; then
-    if [[ "$url" == *"githubusercontent.com"* || "$url" == *"github.com"* ]]; then
-      echo "Não foi possível baixar sem token."
-      echo "Se esse repositório estiver privado, informe o token somente leitura deste instalador."
-      echo
-      if [[ -n "$token_env" ]]; then
-        read -r -s -p "Token GitHub para ${label}: " token < /dev/tty || true
-        echo > /dev/tty
-      else
-        read -r -s -p "Token GitHub: " token < /dev/tty || true
-        echo > /dev/tty
-      fi
-      [[ -z "$token" ]] && { echo "Token vazio. Cancelado."; rm -f "$tmp_installer"; pause; return; }
-      if ! download_with_token "$url" "$tmp_installer" "$token"; then
-        echo "Falha ao baixar mesmo com token. Verifique permissão de leitura do repositório."
-        rm -f "$tmp_installer" 2>/dev/null || true
-        pause
-        return
-      fi
+    if download_public "$url" "$tmp_installer"; then
+      used_token=""
     else
+      echo
       echo "Falha ao baixar o instalador externo."
+      echo "Se o repositório for privado, configure o token no menu opção 9."
+      echo "Arquivo:"
+      echo "$url"
       rm -f "$tmp_installer" 2>/dev/null || true
       pause
       return
@@ -586,62 +745,43 @@ run_external_installer() {
 
   chmod +x "$tmp_installer" 2>/dev/null || true
 
-  # Passa também GITHUB_TOKEN para o instalador chamado.
-  # Além disso, força qualquer git clone interno do instalador a usar o token,
-  # evitando o prompt: Username for 'https://github.com'.
-  run_downloaded_installer() {
-    local run_token="${1:-}" encoded_token="" auth_url=""
+  if [[ -n "$used_token" ]]; then
+    encoded_token="$(printf '%s' "$used_token" | sed 's/%/%25/g; s/@/%40/g; s/:/%3A/g; s/#/%23/g; s/\//%2F/g; s/?/%3F/g; s/&/%26/g')"
+    auth_url="https://x-access-token:${encoded_token}@github.com/"
 
-    if [[ -n "$run_token" ]]; then
-      encoded_token="$(printf '%s' "$run_token" | sed 's/%/%25/g; s/@/%40/g; s/:/%3A/g; s/#/%23/g; s/\//%2F/g; s/?/%3F/g; s/&/%26/g')"
-      auth_url="https://x-access-token:${encoded_token}@github.com/"
-
-      if [[ -n "$token_env" ]]; then
-        env \
-          GITHUB_TOKEN="$run_token" \
-          "$token_env=$run_token" \
-          GIT_TERMINAL_PROMPT=0 \
-          GCM_INTERACTIVE=Never \
-          GIT_CONFIG_COUNT=2 \
-          GIT_CONFIG_KEY_0="url.${auth_url}.insteadOf" \
-          GIT_CONFIG_VALUE_0="https://github.com/" \
-          GIT_CONFIG_KEY_1="url.${auth_url}.insteadOf" \
-          GIT_CONFIG_VALUE_1="http://github.com/" \
-          bash "$tmp_installer"
-      else
-        env \
-          GITHUB_TOKEN="$run_token" \
-          GIT_TERMINAL_PROMPT=0 \
-          GCM_INTERACTIVE=Never \
-          GIT_CONFIG_COUNT=2 \
-          GIT_CONFIG_KEY_0="url.${auth_url}.insteadOf" \
-          GIT_CONFIG_VALUE_0="https://github.com/" \
-          GIT_CONFIG_KEY_1="url.${auth_url}.insteadOf" \
-          GIT_CONFIG_VALUE_1="http://github.com/" \
-          bash "$tmp_installer"
-      fi
-    else
-      env \
-        GIT_TERMINAL_PROMPT=0 \
-        GCM_INTERACTIVE=Never \
-        bash "$tmp_installer"
+    if ! env \
+      GITHUB_TOKEN="$used_token" \
+      "$token_env=$used_token" \
+      GIT_TERMINAL_PROMPT=0 \
+      GCM_INTERACTIVE=Never \
+      GIT_CONFIG_COUNT=2 \
+      GIT_CONFIG_KEY_0="url.${auth_url}.insteadOf" \
+      GIT_CONFIG_VALUE_0="https://github.com/" \
+      GIT_CONFIG_KEY_1="url.${auth_url}.insteadOf" \
+      GIT_CONFIG_VALUE_1="http://github.com/" \
+      bash "$tmp_installer"; then
+      echo
+      echo "O instalador externo retornou erro."
+      echo "Se ele faz git clone interno, confira o token de ${token_env}."
+      rm -f "$tmp_installer" 2>/dev/null || true
+      pause
+      return
     fi
-  }
-
-  if ! run_downloaded_installer "$token"; then
-    echo
-    echo "O instalador externo retornou erro."
-    echo "Se o repositório for privado, confira se o token desta opção tem Contents: Read-only."
-    rm -f "$tmp_installer" 2>/dev/null || true
-    pause
-    return
+  else
+    if ! env \
+      GIT_TERMINAL_PROMPT=0 \
+      GCM_INTERACTIVE=Never \
+      bash "$tmp_installer"; then
+      echo
+      echo "O instalador externo retornou erro."
+      rm -f "$tmp_installer" 2>/dev/null || true
+      pause
+      return
+    fi
   fi
 
   rm -f "$tmp_installer" 2>/dev/null || true
 
-  # Abre automaticamente o menu instalado, quando o instalador cria o comando.
-  # Gestor VPS usa gestorvps. Gestor Bot usa somente botmenu.
-  # Informe os comandos separados por |, em ordem de prioridade.
   if [[ -n "$after_cmds" ]]; then
     IFS='|' read -r -a _after_list <<< "$after_cmds"
     for cmd in "${_after_list[@]}"; do
@@ -749,6 +889,7 @@ main_loop() {
       06|6) run_external_installer "DRAGONSSH" "https://raw.githubusercontent.com/zeusxprime/ssh/refs/heads/main/install.sh" "menu|/bin/menu|/opt/DragonCore/menu" "" "DRAGONSSH_GITHUB_TOKEN" ;;
       07|7) run_external_installer "GESTOR BOT" "https://raw.githubusercontent.com/zeusxprime/bot/refs/heads/main/bot.sh" "botmenu|/usr/local/bin/botmenu" "curl -sL" "BOT_GITHUB_TOKEN" ;;
       08|8) run_badvpn_menu ;;
+      09|9) configure_github_tokens ;;
       00|0) safe_clear; exit 0 ;;
       *) echo "Opção inválida."; sleep 0.3 ;;
     esac
