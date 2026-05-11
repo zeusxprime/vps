@@ -91,13 +91,13 @@ curl_raw() {
   local url="$1"
   local output_path="$2"
   if [[ -n "${GESTORVPS_GITHUB_TOKEN:-}" ]]; then
-    curl -fsSL --retry 3 --connect-timeout 15 \
+    curl -fsSL --retry 2 --connect-timeout 10 --max-time 35 \
       -H "Authorization: Bearer ${GESTORVPS_GITHUB_TOKEN}" \
       -H "Accept: application/vnd.github.raw" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       "$url" -o "$output_path"
   else
-    curl -fsSL --retry 3 --connect-timeout 15 "$url" -o "$output_path"
+    curl -fsSL --retry 2 --connect-timeout 10 --max-time 35 "$url" -o "$output_path"
   fi
 }
 
