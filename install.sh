@@ -12,6 +12,22 @@ TMP_DIR="$(mktemp -d)"
 RAW_BASE_PRIMARY="https://raw.githubusercontent.com/zeusxprime/vps/main"
 RAW_BASE_FALLBACK="https://raw.githubusercontent.com/zeusxprime/vps/refs/heads/main"
 
+# Token do repositório privado do Gestor VPS.
+# Troque apenas o texto entre aspas pelo token correto.
+# Se o repositório estiver público, pode deixar como está.
+GESTORVPS_GITHUB_TOKEN="TOKEN_DO_VPS"
+
+is_placeholder_token() {
+  case "${1:-}" in
+    ""|TOKEN_DO_*|SEU_TOKEN*|tokenaqui|TOKEN_AQUI) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if is_placeholder_token "${GESTORVPS_GITHUB_TOKEN:-}"; then
+  GESTORVPS_GITHUB_TOKEN=""
+fi
+
 NC=$'\e[0m'
 CYAN=$'\e[1;36m'
 RED=$'\e[1;31m'
@@ -59,7 +75,6 @@ ensure_base_packages() {
   if ! command -v curl >/dev/null 2>&1; then
     if command -v apt-get >/dev/null 2>&1; then
       export DEBIAN_FRONTEND=noninteractive
-      export NEEDRESTART_MODE=a
       apt-get update -y >/dev/null 2>&1 || true
       apt-get install -y curl ca-certificates bash coreutils >/dev/null 2>&1 || fail "não foi possível instalar curl."
     elif command -v dnf >/dev/null 2>&1; then
@@ -75,13 +90,15 @@ ensure_base_packages() {
 curl_raw() {
   local url="$1"
   local output_path="$2"
-
-  curl -fsSL \
-    --retry 2 \
-    --connect-timeout 10 \
-    --max-time 35 \
-    "$url" \
-    -o "$output_path" </dev/null
+  if [[ -n "${GESTORVPS_GITHUB_TOKEN:-}" ]]; then
+    curl -fsSL --retry 3 --connect-timeout 15 \
+      -H "Authorization: Bearer ${GESTORVPS_GITHUB_TOKEN}" \
+      -H "Accept: application/vnd.github.raw" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "$url" -o "$output_path"
+  else
+    curl -fsSL --retry 3 --connect-timeout 15 "$url" -o "$output_path"
+  fi
 }
 
 download_raw() {
@@ -99,6 +116,25 @@ download_raw() {
   url="${RAW_BASE_FALLBACK}/${remote_path}"
   if curl_raw "$url" "$output_path"; then
     return 0
+  fi
+
+  if [[ -z "${GESTORVPS_GITHUB_TOKEN:-}" ]]; then
+    printf '
+%bRepo privado?%b Informe um token GitHub somente leitura para zeusxprime/vps.
+' "$CYAN" "$NC"
+    read -r -s -p "Token GitHub Gestor VPS: " GESTORVPS_GITHUB_TOKEN < /dev/tty || true
+    printf '
+' > /dev/tty
+    [[ -z "${GESTORVPS_GITHUB_TOKEN:-}" ]] && return 1
+
+    url="${RAW_BASE_PRIMARY}/${remote_path}"
+    if curl_raw "$url" "$output_path"; then
+      return 0
+    fi
+
+    url="${RAW_BASE_FALLBACK}/${remote_path}"
+    curl_raw "$url" "$output_path"
+    return $?
   fi
 
   return 1
