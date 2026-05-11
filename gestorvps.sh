@@ -17,10 +17,10 @@ LOG_FILE="/var/log/gestorvps.log"
 # Tokens dos repositórios privados no GitHub.
 # Troque apenas o texto entre aspas pelo token correto de cada instalador.
 # Se o instalador estiver público, pode deixar como está.
-GESTORVPS_GITHUB_TOKEN="TOKEN_DO_VPS"
-CHECKUSER_GITHUB_TOKEN="TOKEN_DO_CHECKUSER"
-DRAGONSSH_GITHUB_TOKEN="TOKEN_DO_DRAGONSSH"
-BOT_GITHUB_TOKEN="TOKEN_DO_BOT"
+GESTORVPS_GITHUB_TOKEN="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"
+CHECKUSER_GITHUB_TOKEN="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"
+DRAGONSSH_GITHUB_TOKEN="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"
+BOT_GITHUB_TOKEN="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"
 
 is_placeholder_token() {
   case "${1:-}" in
