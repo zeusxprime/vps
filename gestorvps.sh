@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Tokens GitHub para instaladores privados.
+# Troque apenas o texto dentro das aspas pelo token real de cada repositório.
+CHECKUSER_GITHUB_TOKEN="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"
+DRAGONSSH_GITHUB_TOKEN="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"
+BOT_GITHUB_TOKEN="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"
+
 # Gestor VPS - menu principal modular.
 # Instala em /opt/.gestorvps e cria o comando global: gestorvps
 
@@ -17,10 +23,7 @@ LOG_FILE="/var/log/gestorvps.log"
 # Tokens dos repositórios privados no GitHub.
 # Troque apenas o texto entre aspas pelo token correto de cada instalador.
 # Se o instalador estiver público, pode deixar como está.
-GESTORVPS_GITHUB_TOKEN="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"
-CHECKUSER_GITHUB_TOKEN="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"
-DRAGONSSH_GITHUB_TOKEN="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"
-BOT_GITHUB_TOKEN="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"
+GESTORVPS_GITHUB_TOKEN="TOKEN_DO_VPS"
 
 is_placeholder_token() {
   case "${1:-}" in
@@ -504,9 +507,21 @@ fix_one_script() {
 
 
 
+
+is_placeholder_token() {
+  case "${1:-}" in
+    ""|TOKEN_DO_*|SEU_TOKEN*|tokenaqui|TOKEN_AQUI) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+urlencode_token() {
+  printf '%s' "$1" | sed 's/%/%25/g; s/@/%40/g; s/:/%3A/g; s/#/%23/g; s/\//%2F/g; s/?/%3F/g; s/&/%26/g'
+}
+
 run_external_installer() {
   local label="$1" url="$2" after_cmds="${3:-}" preferred_fetcher="${4:-}" token_env="${5:-}"
-  local cmd="" tmp_installer="" token="" need_token="0"
+  local tmp_installer="" token="" used_token="" encoded_token="" auth_url=""
 
   safe_clear
   echo "$label"
@@ -520,64 +535,72 @@ run_external_installer() {
     return
   fi
 
-  tmp_installer="$(mktemp /tmp/gestorvps-${label// /_}.XXXXXX.sh)" || { echo "Falha ao criar temporário."; pause; return; }
+  tmp_installer="$(mktemp /tmp/gestorvps-${label// /_}.XXXXXX.sh)" || {
+    echo "Falha ao criar temporário."
+    pause
+    return
+  }
 
-  # Cada instalador pode ter seu próprio token, sem salvar no servidor.
   if [[ -n "$token_env" ]]; then
     token="${!token_env:-}"
   fi
 
-  download_with_token() {
-    local download_url="$1" output_file="$2" gh_token="${3:-}"
+  if is_placeholder_token "$token"; then
+    token=""
+  fi
 
-    # Todos os instaladores externos são baixados em RAW.
-    # Repo público: curl normal.
-    # Repo privado: curl RAW com Authorization Bearer usando o token específico da opção.
-    if [[ -n "$gh_token" ]]; then
-      curl -fsSL --retry 2 --connect-timeout 10 --max-time 35 \
-        -H "Authorization: Bearer ${gh_token}" \
-        -H "Accept: application/vnd.github.raw" \
-        -H "X-GitHub-Api-Version: 2022-11-28" \
-        "$download_url" -o "$output_file"
-    else
-      curl -fsSL --retry 2 --connect-timeout 10 --max-time 35 "$download_url" -o "$output_file"
-    fi
+  download_with_token() {
+    local download_url="$1" output_file="$2" gh_token="$3"
+
+    curl -fsSL \
+      --retry 2 \
+      --connect-timeout 10 \
+      --max-time 60 \
+      -H "Authorization: Bearer ${gh_token}" \
+      -H "Accept: application/vnd.github.raw" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "$download_url" \
+      -o "$output_file" </dev/null
   }
 
+  download_public() {
+    local download_url="$1" output_file="$2"
+
+    curl -fsSL \
+      --retry 2 \
+      --connect-timeout 10 \
+      --max-time 60 \
+      "$download_url" \
+      -o "$output_file" </dev/null
+  }
+
+  # Para repositório privado, precisa usar token já aqui no gestorvps.
+  # Se não tiver token, tenta público como fallback.
   if [[ -n "$token" ]]; then
-    if ! download_with_token "$url" "$tmp_installer" "$token"; then
+    if download_with_token "$url" "$tmp_installer" "$token"; then
+      used_token="$token"
+    else
+      echo
       echo "Falha ao baixar usando o token de ${token_env}."
+      echo "Verifique se:"
+      echo "1. o token está correto;"
+      echo "2. o token tem acesso ao repositório certo;"
+      echo "3. a permissão é Contents: Read-only;"
+      echo "4. o arquivo existe nesse link:"
+      echo "$url"
       rm -f "$tmp_installer" 2>/dev/null || true
       pause
       return
     fi
   else
-    if ! download_with_token "$url" "$tmp_installer" ""; then
-      need_token="1"
-    fi
-  fi
-
-  if [[ "$need_token" == "1" ]]; then
-    if [[ "$url" == *"githubusercontent.com"* || "$url" == *"github.com"* ]]; then
-      echo "Não foi possível baixar sem token."
-      echo "Se esse repositório estiver privado, informe o token somente leitura deste instalador."
-      echo
-      if [[ -n "$token_env" ]]; then
-        read -r -s -p "Token GitHub para ${label}: " token < /dev/tty || true
-        echo > /dev/tty
-      else
-        read -r -s -p "Token GitHub: " token < /dev/tty || true
-        echo > /dev/tty
-      fi
-      [[ -z "$token" ]] && { echo "Token vazio. Cancelado."; rm -f "$tmp_installer"; pause; return; }
-      if ! download_with_token "$url" "$tmp_installer" "$token"; then
-        echo "Falha ao baixar mesmo com token. Verifique permissão de leitura do repositório."
-        rm -f "$tmp_installer" 2>/dev/null || true
-        pause
-        return
-      fi
+    if download_public "$url" "$tmp_installer"; then
+      used_token=""
     else
+      echo
       echo "Falha ao baixar o instalador externo."
+      echo "Esse instalador parece estar privado e não há token configurado em ${token_env}."
+      echo "Link:"
+      echo "$url"
       rm -f "$tmp_installer" 2>/dev/null || true
       pause
       return
@@ -586,62 +609,43 @@ run_external_installer() {
 
   chmod +x "$tmp_installer" 2>/dev/null || true
 
-  # Passa também GITHUB_TOKEN para o instalador chamado.
-  # Além disso, força qualquer git clone interno do instalador a usar o token,
-  # evitando o prompt: Username for 'https://github.com'.
-  run_downloaded_installer() {
-    local run_token="${1:-}" encoded_token="" auth_url=""
+  if [[ -n "$used_token" ]]; then
+    encoded_token="$(urlencode_token "$used_token")"
+    auth_url="https://x-access-token:${encoded_token}@github.com/"
 
-    if [[ -n "$run_token" ]]; then
-      encoded_token="$(printf '%s' "$run_token" | sed 's/%/%25/g; s/@/%40/g; s/:/%3A/g; s/#/%23/g; s/\//%2F/g; s/?/%3F/g; s/&/%26/g')"
-      auth_url="https://x-access-token:${encoded_token}@github.com/"
-
-      if [[ -n "$token_env" ]]; then
-        env \
-          GITHUB_TOKEN="$run_token" \
-          "$token_env=$run_token" \
-          GIT_TERMINAL_PROMPT=0 \
-          GCM_INTERACTIVE=Never \
-          GIT_CONFIG_COUNT=2 \
-          GIT_CONFIG_KEY_0="url.${auth_url}.insteadOf" \
-          GIT_CONFIG_VALUE_0="https://github.com/" \
-          GIT_CONFIG_KEY_1="url.${auth_url}.insteadOf" \
-          GIT_CONFIG_VALUE_1="http://github.com/" \
-          bash "$tmp_installer"
-      else
-        env \
-          GITHUB_TOKEN="$run_token" \
-          GIT_TERMINAL_PROMPT=0 \
-          GCM_INTERACTIVE=Never \
-          GIT_CONFIG_COUNT=2 \
-          GIT_CONFIG_KEY_0="url.${auth_url}.insteadOf" \
-          GIT_CONFIG_VALUE_0="https://github.com/" \
-          GIT_CONFIG_KEY_1="url.${auth_url}.insteadOf" \
-          GIT_CONFIG_VALUE_1="http://github.com/" \
-          bash "$tmp_installer"
-      fi
-    else
-      env \
-        GIT_TERMINAL_PROMPT=0 \
-        GCM_INTERACTIVE=Never \
-        bash "$tmp_installer"
+    if ! env \
+      GITHUB_TOKEN="$used_token" \
+      "$token_env=$used_token" \
+      GIT_TERMINAL_PROMPT=0 \
+      GCM_INTERACTIVE=Never \
+      GIT_CONFIG_COUNT=2 \
+      GIT_CONFIG_KEY_0="url.${auth_url}.insteadOf" \
+      GIT_CONFIG_VALUE_0="https://github.com/" \
+      GIT_CONFIG_KEY_1="url.${auth_url}.insteadOf" \
+      GIT_CONFIG_VALUE_1="http://github.com/" \
+      bash "$tmp_installer"; then
+      echo
+      echo "O instalador externo retornou erro."
+      echo "Se ele faz git clone interno, confira o token de ${token_env}."
+      rm -f "$tmp_installer" 2>/dev/null || true
+      pause
+      return
     fi
-  }
-
-  if ! run_downloaded_installer "$token"; then
-    echo
-    echo "O instalador externo retornou erro."
-    echo "Se o repositório for privado, confira se o token desta opção tem Contents: Read-only."
-    rm -f "$tmp_installer" 2>/dev/null || true
-    pause
-    return
+  else
+    if ! env \
+      GIT_TERMINAL_PROMPT=0 \
+      GCM_INTERACTIVE=Never \
+      bash "$tmp_installer"; then
+      echo
+      echo "O instalador externo retornou erro."
+      rm -f "$tmp_installer" 2>/dev/null || true
+      pause
+      return
+    fi
   fi
 
   rm -f "$tmp_installer" 2>/dev/null || true
 
-  # Abre automaticamente o menu instalado, quando o instalador cria o comando.
-  # Gestor VPS usa gestorvps. Gestor Bot usa somente botmenu.
-  # Informe os comandos separados por |, em ordem de prioridade.
   if [[ -n "$after_cmds" ]]; then
     IFS='|' read -r -a _after_list <<< "$after_cmds"
     for cmd in "${_after_list[@]}"; do
