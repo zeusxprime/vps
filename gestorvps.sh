@@ -14,9 +14,6 @@ SCRIPT_GIT="${SCRIPTS_DIR}/git.sh"
 SCRIPT_AWS="${SCRIPTS_DIR}/aws.sh"
 LOG_FILE="/var/log/gestorvps.log"
 
-# Tokens dos repositórios privados no GitHub.
-# Troque apenas o texto entre aspas pelo token correto de cada instalador.
-# Se o instalador estiver público, pode deixar como está.
 GESTORVPS_GITHUB_TOKEN="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"
 CHECKUSER_GITHUB_TOKEN="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"
 DRAGONSSH_GITHUB_TOKEN="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"
@@ -586,31 +583,33 @@ run_external_installer() {
 
   chmod +x "$tmp_installer" 2>/dev/null || true
 
-  # Passa também GITHUB_TOKEN para o instalador chamado, caso ele precise clonar/baixar o próprio repo privado.
-  if [[ -n "$token" && -n "$token_env" ]]; then
-    if ! env GITHUB_TOKEN="$token" "$token_env=$token" bash "$tmp_installer"; then
-      echo
-      echo "O instalador externo retornou erro."
-      rm -f "$tmp_installer" 2>/dev/null || true
-      pause
-      return
+  # Passa também GITHUB_TOKEN para o instalador chamado.
+  # Além disso, força qualquer git clone interno do instalador a usar o token,
+  # evitando o prompt: Username for 'https://github.com'.
+  run_downloaded_installer() {
+    local run_token="${1:-}" encoded_token="" auth_url=""
+
+    if [[ -n "$run_token" ]]; then
+      encoded_token="$(printf '%s' "$run_token" | sed 's/%/%25/g; s/@/%40/g; s/:/%3A/g; s/#/%23/g; s/\//%2F/g; s/?/%3F/g; s/&/%26/g')"
+      auth_url="https://x-access-token:${encoded_token}@github.com/"
+
+      if [[ -n "$token_env" ]]; then
+        env           GITHUB_TOKEN="$run_token"           "$token_env=$run_token"           GIT_TERMINAL_PROMPT=0           GCM_INTERACTIVE=Never           GIT_CONFIG_COUNT=2           GIT_CONFIG_KEY_0="url.${auth_url}.insteadOf"           GIT_CONFIG_VALUE_0="https://github.com/"           GIT_CONFIG_KEY_1="url.${auth_url}.insteadOf"           GIT_CONFIG_VALUE_1="http://github.com/"           bash "$tmp_installer"
+      else
+        env           GITHUB_TOKEN="$run_token"           GIT_TERMINAL_PROMPT=0           GCM_INTERACTIVE=Never           GIT_CONFIG_COUNT=2           GIT_CONFIG_KEY_0="url.${auth_url}.insteadOf"           GIT_CONFIG_VALUE_0="https://github.com/"           GIT_CONFIG_KEY_1="url.${auth_url}.insteadOf"           GIT_CONFIG_VALUE_1="http://github.com/"           bash "$tmp_installer"
+      fi
+    else
+      env         GIT_TERMINAL_PROMPT=0         GCM_INTERACTIVE=Never         bash "$tmp_installer"
     fi
-  elif [[ -n "$token" ]]; then
-    if ! env GITHUB_TOKEN="$token" bash "$tmp_installer"; then
-      echo
-      echo "O instalador externo retornou erro."
-      rm -f "$tmp_installer" 2>/dev/null || true
-      pause
-      return
-    fi
-  else
-    if ! bash "$tmp_installer"; then
-      echo
-      echo "O instalador externo retornou erro."
-      rm -f "$tmp_installer" 2>/dev/null || true
-      pause
-      return
-    fi
+  }
+
+  if ! run_downloaded_installer "$token"; then
+    echo
+    echo "O instalador externo retornou erro."
+    echo "Se o repositório for privado, confira se o token desta opção tem Contents: Read-only."
+    rm -f "$tmp_installer" 2>/dev/null || true
+    pause
+    return
   fi
 
   rm -f "$tmp_installer" 2>/dev/null || true
