@@ -45,9 +45,70 @@ normalize_github_tokens() {
   fi
 }
 
+github_bot_token_valid() {
+  local token="$1"
+  local code=""
+
+  token="${token//$'\r'/}"
+  token="${token//$'\n'/}"
+  token="$(printf '%s' "$token" | sed 's/^ *//;s/ *$//')"
+  [[ -n "$token" ]] || return 1
+
+  code="$(curl -sS -o /dev/null -w '%{http_code}' \
+    -H "Authorization: Bearer ${token}" \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    "https://api.github.com/repos/zeusxprime/bot" 2>/dev/null || true)"
+
+  [[ "$code" == "200" ]]
+}
+
+request_and_save_valid_bot_token() {
+  local token=""
+
+  while true; do
+    read -r -p "Cole o token GitHub do Bot: " token < /dev/tty || true
+    token="${token//$'\r'/}"
+    token="${token//$'\n'/}"
+    token="$(printf '%s' "$token" | sed 's/^ *//;s/ *$//')"
+
+    if [[ -z "$token" ]]; then
+      echo
+      echo "Token vazio. Cancelado."
+      return 1
+    fi
+
+    echo
+    echo "Validando token do Bot..."
+    if github_bot_token_valid "$token"; then
+      BOT_GITHUB_TOKEN="$token"
+      normalize_github_tokens
+      save_github_tokens_file
+      echo "Token válido e salvo automaticamente."
+      printf '%s' "$BOT_GITHUB_TOKEN"
+      return 0
+    fi
+
+    echo "Token inválido ou sem acesso ao repositório zeusxprime/bot."
+    echo "Verifique se ele tem acesso ao repositório e permissão Contents: Read-only."
+    echo
+  done
+}
+
 save_github_tokens_file() {
   umask 077
+  local current_gestor="" current_check="" current_dragon=""
+  if [[ -f "$TOKEN_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$TOKEN_FILE" 2>/dev/null || true
+    current_gestor="${GESTORVPS_GITHUB_TOKEN:-}"
+    current_check="${CHECKUSER_GITHUB_TOKEN:-}"
+    current_dragon="${DRAGONSSH_GITHUB_TOKEN:-}"
+  fi
   cat > "$TOKEN_FILE" <<EOF
+GESTORVPS_GITHUB_TOKEN="${current_gestor}"
+CHECKUSER_GITHUB_TOKEN="${current_check}"
+DRAGONSSH_GITHUB_TOKEN="${current_dragon}"
 BOT_GITHUB_TOKEN="${BOT_GITHUB_TOKEN:-}"
 EOF
   chmod 600 "$TOKEN_FILE" 2>/dev/null || true
@@ -70,32 +131,19 @@ configure_github_tokens() {
   echo
 
   if [[ -n "${BOT_GITHUB_TOKEN:-}" ]]; then
-    echo "Token do Bot atual: ${BOT_GITHUB_TOKEN}"
-    echo
-    read -r -p "Trocar token do Bot? [s/N]: " trocar || true
-    if [[ ! "$trocar" =~ ^[sS]$ ]]; then
+    echo "Validando token do Bot salvo..."
+    if github_bot_token_valid "$BOT_GITHUB_TOKEN"; then
       echo
-      echo "Token mantido."
+      echo "Token salvo válido. Nada precisa ser alterado."
       pause
       return
     fi
-  fi
-
-  read -r -p "Cole o token GitHub do Bot: " BOT_GITHUB_TOKEN < /dev/tty || true
-
-  if [[ -z "${BOT_GITHUB_TOKEN:-}" ]]; then
     echo
-    echo "Token vazio. Nada foi alterado."
-    pause
-    return
+    echo "Token salvo inválido/expirado ou sem permissão. Informe um novo token."
+    echo
   fi
 
-  normalize_github_tokens
-  save_github_tokens_file
-
-  echo
-  echo "Token informado: ${BOT_GITHUB_TOKEN}"
-  echo "Token salvo com segurança local."
+  request_and_save_valid_bot_token >/dev/null || { pause; return; }
   pause
 }
 
@@ -103,11 +151,29 @@ get_or_request_token() {
   local token_env="$1"
   local label="$2"
   local current=""
-  local value=""
 
   load_github_tokens
   normalize_github_tokens
   current="${!token_env:-}"
+
+  if [[ "$token_env" == "BOT_GITHUB_TOKEN" ]]; then
+    if ! is_placeholder_token "$current"; then
+      echo "Validando token do Bot salvo..." >&2
+      if github_bot_token_valid "$current"; then
+        echo "Token salvo válido. Prosseguindo automaticamente." >&2
+        printf '%s' "$current"
+        return 0
+      fi
+      echo "Token salvo inválido/expirado ou sem permissão. Informe um novo token." >&2
+    else
+      echo >&2
+      echo "Token necessário para ${label}." >&2
+      echo "O token será salvo localmente em $TOKEN_FILE com chmod 600." >&2
+    fi
+
+    request_and_save_valid_bot_token
+    return $?
+  fi
 
   if ! is_placeholder_token "$current"; then
     printf '%s' "$current"
@@ -117,26 +183,9 @@ get_or_request_token() {
   echo
   echo "Token necessário para ${label}."
   echo "O token será salvo localmente em $TOKEN_FILE com chmod 600."
-  echo
-  read -r -p "Cole o token GitHub do Bot: " value < /dev/tty || true
-
-  if [[ -z "$value" ]]; then
-    echo
-    echo "Token vazio. Instalação cancelada."
-    return 1
-  fi
-
-  printf -v "$token_env" '%s' "$value"
-  normalize_github_tokens
-  save_github_tokens_file
-
-  echo
-  echo "Token informado: $value"
-  echo "Token salvo. Iniciando instalação automaticamente..."
-  sleep 0.8
-
-  printf '%s' "$value"
+  return 1
 }
+
 
 load_github_tokens
 normalize_github_tokens
@@ -631,34 +680,13 @@ EOF
 
 
 ask_new_bot_token_after_failure() {
-  local token=""
-
   echo
   echo "O token salvo do Bot falhou ou não tem mais permissão."
   echo "Cole um novo token GitHub do repositório privado do bot."
   echo
-
-  read -r -s -p "Novo token GitHub Bot: " token < /dev/tty || true
-  echo > /dev/tty
-
-  token="${token//$'\r'/}"
-  token="${token//$'\n'/}"
-
-  if [[ -z "${token// /}" ]]; then
-    echo "Token vazio. Cancelado."
-    return 1
-  fi
-
-  echo
-  echo "Token informado:"
-  echo "$token"
-  echo
-  read -r -p "Pressione ENTER para salvar e tentar novamente..." _ < /dev/tty || true
-
-  BOT_GITHUB_TOKEN="$token"
-  save_bot_token_internal "$BOT_GITHUB_TOKEN" || return 1
-  printf '%s' "$BOT_GITHUB_TOKEN"
+  request_and_save_valid_bot_token
 }
+
 
 run_external_installer() {
   local label="$1" url="$2" after_cmds="${3:-}" preferred_fetcher="${4:-}" token_env="${5:-}"
@@ -956,7 +984,7 @@ main_loop() {
     case "$opt" in
       01|1) update_server ;;
       02|2) reboot_server ;;
-      03|3) run_external_installer "CHECKUSER" "https://raw.githubusercontent.com/zeusxprime/checkuser/refs/heads/main/install.sh" "checkuser|/usr/local/bin/checkuser|/bin/checkuser|menu|/bin/menu" "curl -sL" ;;
+      03|3) run_external_installer "CHECKUSER" "https://raw.githubusercontent.com/zeusxprime/checkuser/refs/heads/main/install.sh" "checkuser-menu|/usr/local/bin/checkuser-menu|menu|/bin/menu" "curl -sL" ;;
       04|4) run_script "GERENCIAR GIT" "$SCRIPT_GIT" ;;
       05|5) run_script "GERENCIAR VPS AWS" "$SCRIPT_AWS" ;;
       06|6) run_external_installer "DRAGONSSH" "https://raw.githubusercontent.com/zeusxprime/ssh/refs/heads/main/install.sh" "menu|/bin/menu|/opt/DragonCore/menu" ;;
